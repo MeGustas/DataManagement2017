@@ -121,7 +121,16 @@ RC FileHandle::writePage(PageNum pageNum, const void *data)
 
 RC FileHandle::appendPage(const void *data)
 {
-    return -1;
+	if(NULL == this->_fileHandle){
+		return -1;
+	}
+	size_t rt = fwrite(data, PAGE_SIZE, 1, this->_fileHandle);
+	if(rt != 1)
+	{
+		return -1;
+	}
+	this->appendPageCounter++;
+    return 0;
 }
 
 
