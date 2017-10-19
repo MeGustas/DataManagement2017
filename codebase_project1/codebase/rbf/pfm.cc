@@ -109,9 +109,21 @@ FileHandle::~FileHandle()
 
 RC FileHandle::readPage(PageNum pageNum, void *data)
 {
-    return -1;
+	if(NULL == this->_fileHandle)
+	{
+		return -1;
+	}
+	if(0 != fseek(this->_fileHandle, pageNum*PAGE_SIZE, SEEK_SET))
+	{
+		return -1;
+	}
+	if(1 != fread(data, PAGE_SIZE, 1, this->_fileHandle))
+	{
+		return -1;
+	}
+	this->readPageCounter++;
+	return 0;
 }
-
 
 RC FileHandle::writePage(PageNum pageNum, const void *data)
 {
