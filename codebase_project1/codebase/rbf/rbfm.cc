@@ -1,4 +1,6 @@
 #include "rbfm.h"
+#include<stdio.h>
+#include<unistd.h>
 
 RecordBasedFileManager* RecordBasedFileManager::_rbf_manager = 0;
 
@@ -19,7 +21,19 @@ RecordBasedFileManager::~RecordBasedFileManager()
 }
 
 RC RecordBasedFileManager::createFile(const string &fileName) {
-    return -1;
+	if(0 == access(fileName.c_str(),F_OK))
+	{
+		return -1;
+	}
+	FILE *fp = NULL;
+	fp = fopen(fileName.c_str(), "a+");
+	if(NULL == fp)
+	{
+		return -1;
+	}
+	fclose(fp);
+	fp = NULL;
+	return 0;
 }
 
 RC RecordBasedFileManager::destroyFile(const string &fileName) {
@@ -27,7 +41,21 @@ RC RecordBasedFileManager::destroyFile(const string &fileName) {
 }
 
 RC RecordBasedFileManager::openFile(const string &fileName, FileHandle &fileHandle) {
-    return -1;
+	//if not exist
+	if(-1 == access(fileName.c_str(),F_OK))
+	{
+		return -1;
+	}
+	FILE* fp = NULL;
+	fp = fopen(fileName.c_str(), "r+");
+	if(NULL == fp)
+	{
+		return -1;
+	}else{
+		fileHandle.setFileHandle(fp);
+		fp = NULL;
+	}
+	return 0;
 }
 
 RC RecordBasedFileManager::closeFile(FileHandle &fileHandle) {

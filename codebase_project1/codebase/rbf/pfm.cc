@@ -65,7 +65,7 @@ RC PagedFileManager::openFile(const string &fileName, FileHandle &fileHandle)
 		return -1;
 	}
 	FILE* fp = NULL;
-	fp = fopen(fileName.c_str(), "a+");
+	fp = fopen(fileName.c_str(), "r+");
 	if(NULL == fp)
 	{
 		return -1;
@@ -98,7 +98,7 @@ FileHandle::FileHandle()
     appendPageCounter = 0;
 
     _fileHandle = NULL;
-    _numberOfPages = -1;
+    _numberOfPages = 0;
 }
 
 
@@ -109,7 +109,7 @@ FileHandle::~FileHandle()
 
 RC FileHandle::readPage(PageNum pageNum, void *data)
 {
-	if(NULL == this->_fileHandle)
+	if(NULL == this->_fileHandle or pageNum >= this->_numberOfPages)
 	{
 		return -1;
 	}
@@ -127,7 +127,24 @@ RC FileHandle::readPage(PageNum pageNum, void *data)
 
 RC FileHandle::writePage(PageNum pageNum, const void *data)
 {
-    return -1;
+	if(NULL == this->_fileHandle or pageNum >= this->_numberOfPages)
+	{
+		return -1;
+	}
+	if(0 != fseek(this->_fileHandle, pageNum*PAGE_SIZE*1L, SEEK_SET))
+	{
+		return -1;
+	}
+	if(1 != fwrite(data, PAGE_SIZE, 1, this->_fileHandle))
+	{
+		return -1;
+	}
+	if(0 != fflush(this->_fileHandle))
+	{
+		return -1;
+	}
+	this->writePageCounter++;
+	return 0;
 }
 
 
@@ -136,30 +153,25 @@ RC FileHandle::appendPage(const void *data)
 	if(NULL == this->_fileHandle){
 		return -1;
 	}
-	size_t rt = fwrite(data, PAGE_SIZE, 1, this->_fileHandle);
-	if(rt != 1)
+	if(0 != fseek(this->_fileHandle, 0L, SEEK_END))
+	{
+		return -1;
+	}
+	if(1 != fwrite(data, PAGE_SIZE, 1, this->_fileHandle))
+	{
+		return -1;
+	}
+	if(0 != fflush(this->_fileHandle))
 	{
 		return -1;
 	}
 	this->appendPageCounter++;
+	this->_numberOfPages++;
     return 0;
 }
 
-
 unsigned FileHandle::getNumberOfPages()
 {
-	if(-1 == this->_numberOfPages)
-	{
-		unsigned long filesize = -1;
-		if(NULL == this->_fileHandle)
-		{
-			return -1;
-		}
-		fseek(this->_fileHandle, 0L, SEEK_END);
-		filesize = ftell(this->_fileHandle);
-
-		this->_numberOfPages = filesize/PAGE_SIZE;
-	}
 	return this->_numberOfPages;
 }
 
@@ -174,7 +186,19 @@ RC FileHandle::collectCounterValues(unsigned &readPageCount, unsigned &writePage
 
 RC FileHandle::setFileHandle(FILE* fh)
 {
+	if(NULL == fh)
+	{
+		return -1;
+	}
 	this->_fileHandle = fh;
+	//calculate the number of pages
+	unsigned long filesize = -1;
+	if(0 != fseek(this->_fileHandle, 0L, SEEK_END))
+	{
+		return -1;
+	}
+	filesize = ftell(this->_fileHandle);
+	this->_numberOfPages = filesize/PAGE_SIZE;
 	return 0;
 }
 
