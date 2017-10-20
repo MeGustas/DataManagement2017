@@ -106,7 +106,7 @@ void prepareRecord(int fieldCount, unsigned char *nullFieldsIndicator, const int
         offset += sizeof(float);
     }
 
-    // Is the height field not-NULL?
+    // Is the salary field not-NULL?
     nullBit = nullFieldsIndicator[0] & (1 << 4);
     if (!nullBit) {
         memcpy((char *)buffer + offset, &salary, sizeof(int));
