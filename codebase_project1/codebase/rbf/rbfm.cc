@@ -59,30 +59,74 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const vector<Att
 	 * Note that integer and real type fields do not have an associated length value in front of them;
 	 * this is because each of these types always occupies 4 bytes.
 	 */
-	int iRecSize = 0;
+	//calculate the record's length
+	int offset = 0;
+	// Null-indicators
+	int nullFieldsIndicatorActualSize = ceil((double) recordDescriptor.size() / CHAR_BIT);
+	unsigned char *nullsIndicator = (unsigned char *) malloc(nullFieldsIndicatorActualSize);
+	memset(nullsIndicator, 0, nullFieldsIndicatorActualSize);
+	// Null-indicator for the fields
+	memcpy(nullsIndicator,(char *)data + offset, nullFieldsIndicatorActualSize);
+	offset += nullFieldsIndicatorActualSize;
+
+	bool nullBit = false;
+	int iLength = 0;
 	for(unsigned int iLoop = 0; iLoop < recordDescriptor.size(); iLoop++ )	{
-		iRecSize += recordDescriptor[iLoop].length;
+		// Is this field not-NULL?
+		nullBit = nullsIndicator[0] & (1 << (nullFieldsIndicatorActualSize - iLoop));
+		if (!nullBit) {
+			switch(recordDescriptor[iLoop].type) {
+			case TypeInt:
+				offset += sizeof(int);
+				break;
+			case TypeReal:
+				offset += sizeof(float);
+				break;
+			case TypeVarChar:
+				memcpy(&iLength, (char *)data + offset, sizeof(int));
+				offset += sizeof(int);
+				offset += iLength;
+				break;
+			default:
+				return -1;
+			}
+		}
 	}
+	int iRecSize = offset;
 
 	unsigned pageCount = fileHandle.getNumberOfPages();
-	if(0 == pageCount){
-		void *buffer = malloc(PAGE_SIZE);
-		int ifreespace = PAGE_SIZE - sizeof(int) - iRecSize;
-		memcpy(buffer, &ifreespace, sizeof(int));
-		memcpy((char *)buffer + sizeof(int), (char *)data, iRecSize);
-
-		if(0 != fileHandle.appendPage(buffer)){
+	void *buffer = malloc(PAGE_SIZE);
+	if(0 != pageCount){
+		if( 0 != fileHandle.readPage(pageCount - 1, buffer)){
 			return -1;
 		}
-		rid.pageNum = 0;
-		rid.slotNum = 0;
+		int ifreespace = 0;
+		memcpy(&ifreespace, (char*)buffer, sizeof(int));
+		if(ifreespace >= iRecSize){
+			int ioffset = PAGE_SIZE - ifreespace;
+			memcpy((char*)buffer + ioffset, data, iRecSize);
 
-	}else{
-		return -1;
-		//void *buffer = malloc(PAGE_SIZE);
-		//RC rc = fileHandle.readPage(pageCount - 1, buffer);
+			rid.pageNum = pageCount -1;
+			rid.slotNum = (PAGE_SIZE - ifreespace - sizeof(int))/iRecSize;
+
+			ifreespace = ifreespace - iRecSize;
+			memcpy(buffer, &ifreespace, sizeof(int));
+			free(buffer);
+			return 0;
+		}
 	}
 
+	int ifreespace = PAGE_SIZE - sizeof(int) - iRecSize;
+	memcpy(buffer, &ifreespace, sizeof(int));
+	memcpy((char *)buffer + sizeof(int), (char *)data, iRecSize);
+
+	if(0 != fileHandle.appendPage(buffer)){
+		return -1;
+	}
+	rid.pageNum = fileHandle.getNumberOfPages() -1;
+	rid.slotNum = 0;
+
+	free(buffer);
 	return 0;
 }
 
