@@ -45,35 +45,20 @@ RC RecordBasedFileManager::closeFile(FileHandle &fileHandle) {
 }
 
 RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const vector<Attribute> &recordDescriptor, const void *data, RID &rid) {
-	/* Suppose you have five fields and their types are varchar(20), integer, varchar(20), real, and string.
-	 * If a record is ("Tom", 25, "UCIrvine", 3.1415, 100),
-	 * then the format of the record should be:
-	 * [1 byte for the null-indicators for the fields: bit 00000000]
-	 * [4 bytes for the length 3]
-	 * [3 bytes for the string "Tom"]
-	 * [4 bytes for the integer value 25]
-	 * [4 bytes for the length 8]
-	 * [8 bytes for the string "UCIrvine"]
-	 * [4 bytes for the float value 3.1415]
-	 * [4 bytes for the integer value 100].
-	 * Note that integer and real type fields do not have an associated length value in front of them;
-	 * this is because each of these types always occupies 4 bytes.
-	 */
 	//calculate the record's length
 	int offset = 0;
-	// Null-indicators
+
 	int nullFieldsIndicatorActualSize = ceil((double) recordDescriptor.size() / CHAR_BIT);
 	unsigned char *nullsIndicator = (unsigned char *) malloc(nullFieldsIndicatorActualSize);
 	memset(nullsIndicator, 0, nullFieldsIndicatorActualSize);
-	// Null-indicator for the fields
+
 	memcpy(nullsIndicator,(char *)data + offset, nullFieldsIndicatorActualSize);
 	offset += nullFieldsIndicatorActualSize;
 
 	bool nullBit = false;
 	int iLength = 0;
-	for(unsigned int iLoop = 0; iLoop < recordDescriptor.size(); iLoop++ )	{
-		// Is this field not-NULL?
-		nullBit = nullsIndicator[0] & (1 << (nullFieldsIndicatorActualSize - iLoop));
+	for(unsigned int iLoop = 0; iLoop < recordDescriptor.size(); iLoop++ ){
+		nullBit = nullsIndicator[0] & (1 << (nullFieldsIndicatorActualSize*8 - 1 - iLoop));
 		if (!nullBit) {
 			switch(recordDescriptor[iLoop].type) {
 			case TypeInt:
@@ -92,33 +77,62 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const vector<Att
 			}
 		}
 	}
-	int iRecSize = offset;
-
+	unsigned int iRecSize = offset;
+	//Insert the Record
 	unsigned pageCount = fileHandle.getNumberOfPages();
 	void *buffer = malloc(PAGE_SIZE);
+
 	if(0 != pageCount){
+		//there is available page
 		if( 0 != fileHandle.readPage(pageCount - 1, buffer)){
 			return -1;
 		}
-		int ifreespace = 0;
-		memcpy(&ifreespace, (char*)buffer, sizeof(int));
-		if(ifreespace >= iRecSize){
-			int ioffset = PAGE_SIZE - ifreespace;
+		unsigned int ifreespace = 0;
+		//read the free space size
+		memcpy(&ifreespace, (char*)buffer + PAGE_SIZE - sizeof(unsigned int), sizeof(unsigned int));
+		if(ifreespace >= iRecSize + ((unsigned int)sizeof(IREC))){
+			/*there is enough space*/
+			//read the count of records
+			int iRecCnt = 0;
+			memcpy(&iRecCnt, (char*)buffer + PAGE_SIZE - 2* sizeof(int), sizeof(int));
+			//calculate the offset to insert the new record
+			int ioffset = PAGE_SIZE - ifreespace - 2 *sizeof(int) - iRecCnt *sizeof(IREC);
 			memcpy((char*)buffer + ioffset, data, iRecSize);
 
 			rid.pageNum = pageCount -1;
-			rid.slotNum = (PAGE_SIZE - ifreespace - sizeof(int))/iRecSize;
-
-			ifreespace = ifreespace - iRecSize;
-			memcpy(buffer, &ifreespace, sizeof(int));
+			rid.slotNum = iRecCnt;
+			//calculate the free space size and the record size
+			iRecCnt++;
+			ifreespace = ifreespace - iRecSize - sizeof(IREC);
+			memcpy((char*)buffer + PAGE_SIZE - sizeof(int), &ifreespace, sizeof(int));
+			memcpy((char*)buffer + PAGE_SIZE - 2* sizeof(int), &iRecCnt, sizeof(int));
+			//store the index of this record
+			IREC indexRec;
+			indexRec.isdelete = 0;
+			indexRec.pos = ioffset;
+			indexRec.size = iRecSize;
+			memcpy((char*)buffer + PAGE_SIZE - 2* sizeof(int) - iRecCnt *sizeof(IREC), &indexRec, sizeof(IREC));
+			if(0 != fileHandle.writePage(pageCount - 1, buffer)){
+				return -1;
+			}
 			free(buffer);
 			return 0;
 		}
 	}
-
-	int ifreespace = PAGE_SIZE - sizeof(int) - iRecSize;
-	memcpy(buffer, &ifreespace, sizeof(int));
-	memcpy((char *)buffer + sizeof(int), (char *)data, iRecSize);
+	/*there is no page or there is no enough space*/
+	//store the size of free space and the count of records
+	int iRecCnt = 1;
+	unsigned int ifreespace = PAGE_SIZE - 2*sizeof(int) - iRecSize - sizeof(IREC);
+	memcpy((char*)buffer + PAGE_SIZE - sizeof(int), &ifreespace, sizeof(unsigned int));
+	memcpy((char*)buffer + PAGE_SIZE - 2*sizeof(int), &iRecCnt, sizeof(int));
+	//store the record
+	memcpy((char *)buffer, (char *)data, iRecSize);
+	//store the index of the record
+	IREC indexRec;
+	indexRec.pos = 0;
+	indexRec.size = iRecSize;
+	indexRec.isdelete = 0;
+	memcpy((char*)buffer + PAGE_SIZE - 2*sizeof(int) - sizeof(IREC), &indexRec, sizeof(IREC));
 
 	if(0 != fileHandle.appendPage(buffer)){
 		return -1;
@@ -136,14 +150,12 @@ RC RecordBasedFileManager::readRecord(FileHandle &fileHandle, const vector<Attri
 	if( 0 != fileHandle.readPage(rid.pageNum, buffer)){
 		return -1;
 	}
+	//read the index of record
+	IREC indexRec;
+	int offset = PAGE_SIZE - 2* sizeof(int) - (rid.slotNum + 1)* sizeof(IREC);
+	memcpy(&indexRec, (char *)buffer + offset, sizeof(IREC));
 
-	int iRecSize = 0;
-	for(unsigned int iLoop = 0; iLoop < recordDescriptor.size(); iLoop++ )	{
-		iRecSize += recordDescriptor[iLoop].length;
-	}
-
-	int ioffset = sizeof(int) + rid.slotNum* iRecSize;
-	memcpy((char *)data, (char *)buffer + ioffset, iRecSize);
+	memcpy((char *)data, (char *)buffer + indexRec.pos, indexRec.size);
 	free(buffer);
 
 	return 0;
@@ -172,7 +184,7 @@ RC RecordBasedFileManager::printRecord(const vector<Attribute> &recordDescriptor
 	unsigned char* content;
 	for(unsigned int iLoop = 0; iLoop < recordDescriptor.size(); iLoop++ )	{
 		// Is this field not-NULL?
-		nullBit = nullsIndicator[0] & (1 << (7 - iLoop));
+		nullBit = nullsIndicator[0] & (1 << (nullFieldsIndicatorActualSize*8 - 1 - iLoop));
 		if (!nullBit) {
 			switch(recordDescriptor[iLoop].type) {
 			case TypeInt:

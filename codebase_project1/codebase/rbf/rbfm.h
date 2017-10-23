@@ -16,6 +16,13 @@ typedef struct
   unsigned slotNum;    // slot number in the page
 } RID;
 
+//Record Index in the page
+typedef struct{
+unsigned int pos:29; //the offset in the page
+unsigned int isdelete:1; //the flag of delete
+unsigned int spanned:2;  //not used
+unsigned int size;//the size of the record
+} IREC;
 
 // Attribute
 typedef enum { TypeInt = 0, TypeReal, TypeVarChar } AttrType;
